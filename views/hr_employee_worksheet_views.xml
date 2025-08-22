@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <record id="view_employee_form_worksheet" model="ir.ui.view">
+        <field name="name">hr.employee.view.form.inherit.worksheet</field>
+        <field name="model">hr.employee</field>
+        <field name="inherit_id" ref="hr.view_employee_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Worksheet">
+                    <field name="worksheet_ids" invisible="1"/>
+                    <group>
+                        <group string="Working Hours">
+                            <label for="monday_from" string="Monday"/>
+                            <div class="o_row">
+                                <field name="monday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="monday_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="tuesday_from" string="Tuesday"/>
+                            <div class="o_row">
+                                <field name="tuesday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="tuesday_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="wednesday_from" string="Wednesday"/>
+                            <div class="o_row">
+                                <field name="wednesday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="wednesday_to" widget="float_time" nolabel="1"/>
+                            </div>
+                             <label for="thursday_from" string="Thursday"/>
+                            <div class="o_row">
+                                <field name="thursday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="thursday_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="friday_from" string="Friday"/>
+                            <div class="o_row">
+                                <field name="friday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="friday_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="saturday_from" string="Saturday"/>
+                            <div class="o_row">
+                                <field name="saturday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="saturday_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="sunday_from" string="Sunday"/>
+                            <div class="o_row">
+                                <field name="sunday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="sunday_to" widget="float_time" nolabel="1"/>
+                            </div>
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
