@@ -360,6 +360,8 @@ class BiometricDeviceDetails(models.Model):
         check_out_local = result.get("check_out")
         status_list = result.get("status", [])
         notification_to_send = None
+        was_missing_checkin_flag = False
+        was_missing_checkout_flag = False
 
         if "missing_checkin" in status_list and check_out_local:
             workday = check_out_local.date()
@@ -367,6 +369,7 @@ class BiometricDeviceDetails(models.Model):
             if shift and shift.get('start_local'):
                 check_in_local = shift['start_local']
                 notification_to_send = 'missing_checkin'
+                was_missing_checkin_flag = True
             else:
                 _logger.warning(f"Could not find worksheet schedule for {employee.name} on {workday} to correct missing check-in.")
                 return 
@@ -377,6 +380,7 @@ class BiometricDeviceDetails(models.Model):
                 if 'missing_checkout' not in status_list:
                     status_list.append('missing_checkout')
                 notification_to_send = 'missing_checkout'
+                was_missing_checkout_flag = True
 
         if not check_in_local:
             return
@@ -401,6 +405,8 @@ class BiometricDeviceDetails(models.Model):
             'status_ids': [(6, 0, status_ids)],
             'worked_hours': result.get("worked_hours", 0),
             'overtime_hours': result.get("overtime_hours", 0),
+            'was_missing_checkin': was_missing_checkin_flag,
+            'was_missing_checkout': was_missing_checkout_flag,
         }
 
         day_start_local = datetime.combine(check_in_local.date(), time.min)
@@ -419,6 +425,11 @@ class BiometricDeviceDetails(models.Model):
             attendance_rec = hr_attendance.create(vals)
         else:
             if not existing.is_corrected:
+                if existing.was_missing_checkin:
+                    vals['was_missing_checkin'] = True
+                if existing.was_missing_checkout:
+                    vals['was_missing_checkout'] = True
+
                 existing_statuses = existing.status_ids.mapped('name')
                 final_statuses = set(existing_statuses + status_list)
                 

@@ -119,6 +119,14 @@ class AttendanceStatusTag(models.Model):
 class HrAttendance(models.Model):
     _inherit = 'hr.attendance'
 
+    # NEW Fields to track original state
+    was_missing_checkin = fields.Boolean(
+        string="Was Missing Check-In", readonly=True, copy=False,
+        help="Set if the check-in was originally missing and auto-corrected.")
+    was_missing_checkout = fields.Boolean(
+        string="Was Missing Check-Out", readonly=True, copy=False,
+        help="Set if the check-out was originally missing and auto-corrected.")
+
     worked_hours = fields.Float(
         string='Worked Hours',
         compute='_compute_worked_hours',
@@ -154,7 +162,7 @@ class HrAttendance(models.Model):
     )
     notification_sent = fields.Boolean(string="Notification Sent", default=False)
 
-    @api.depends('check_in', 'check_out', 'employee_id.worksheet_ids.work_from', 'employee_id.worksheet_ids.work_to')
+    @api.depends('check_in', 'check_out', 'employee_id.worksheet_ids', 'is_corrected', 'was_missing_checkin', 'was_missing_checkout')
     def _compute_status_ids(self):
         StatusTag = self.env['hr.attendance.status.tag']
         status_tag_cache = {tag.name: tag for tag in StatusTag.search([])}
@@ -166,21 +174,25 @@ class HrAttendance(models.Model):
             return status_tag_cache[name]
 
         for att in self:
-            status_flags = []
+            status_flags = set()
             if not att.check_in or not att.employee_id:
                 att.status_ids = False
                 continue
+
+            # NEW LOGIC: Check persistent flags first
+            if att.was_missing_checkin and not att.is_corrected:
+                status_flags.add("missing_checkin")
+            if att.was_missing_checkout and not att.is_corrected:
+                status_flags.add("missing_checkout")
 
             user_tz = pytz.timezone(att.employee_id.tz or self.env.user.tz or 'UTC')
             check_in_local = att.check_in.astimezone(user_tz)
             shift = att.employee_id._get_employee_shift_for_day(check_in_local.date(), user_tz)
 
             if not shift:
-                status_flags.append("unscheduled")
-                if not att.check_out:
-                    # Don't add missing_checkout here for live records
-                    if att.check_in.date() < datetime.now(user_tz).date():
-                        status_flags.append("missing_checkout")
+                status_flags.add("unscheduled")
+                if not att.check_out and att.check_in.date() < datetime.now(user_tz).date():
+                    status_flags.add("missing_checkout")
                 att.status_ids = [(6, 0, [get_tag(flag).id for flag in status_flags])]
                 continue
 
@@ -188,36 +200,34 @@ class HrAttendance(models.Model):
             shift_end_local = shift['end_local']
 
             if check_in_local < shift_start_local:
-                status_flags.append("early_checkin")
+                status_flags.add("early_checkin")
             if check_in_local > (shift_start_local + timedelta(minutes=5)):
-                status_flags.append("late_checkin")
+                status_flags.add("late_checkin")
 
             if att.check_out:
                 check_out_local = att.check_out.astimezone(user_tz)
                 if check_out_local < shift_end_local:
-                    status_flags.append("early_checkout")
+                    status_flags.add("early_checkout")
                 if check_out_local > shift_end_local:
-                    status_flags.append("late_checkout")
+                    status_flags.add("late_checkout")
                 if shift['is_night_shift']:
-                    status_flags.append('night_shift')
+                    status_flags.add('night_shift')
 
                 worked_seconds = (att.check_out - att.check_in).total_seconds()
                 planned_seconds = (shift_end_local - shift_start_local).total_seconds()
 
                 if worked_seconds > planned_seconds + 60:
-                    status_flags.append("extra_hours")
+                    status_flags.add("extra_hours")
                 elif worked_seconds < planned_seconds - 60:
-                    status_flags.append("less_hours")
+                    status_flags.add("less_hours")
             else:
-                # **MODIFIED LOGIC**: Only tag 'missing_checkout' for previous days.
-                # The main 'missing_checkout' tag is now applied by the cron job logic.
-                if att.check_in.date() < datetime.now(user_tz).date():
-                    status_flags.append("missing_checkout")
+                if att.check_in.date() < datetime.now(user_tz).date() and not att.was_missing_checkout:
+                    status_flags.add("missing_checkout")
 
-            status_tags = [get_tag(flag) for flag in set(status_flags)]
+            status_tags = [get_tag(flag) for flag in status_flags]
             att.status_ids = [(6, 0, [tag.id for tag in status_tags])]
 
-    @api.depends('check_in', 'check_out', 'employee_id.worksheet_ids.work_from', 'employee_id.worksheet_ids.work_to')
+    @api.depends('check_in', 'check_out', 'employee_id.worksheet_ids')
     def _compute_overtime_hours(self):
         for att in self:
             if not att.check_in or not att.check_out or not att.employee_id:
@@ -239,7 +249,6 @@ class HrAttendance(models.Model):
             overtime_seconds = worked_seconds - planned_seconds
 
             att.overtime_hours = overtime_seconds / 3600.0
-
 
     @api.constrains('check_in', 'check_out', 'employee_id')
     def _check_validity(self):
