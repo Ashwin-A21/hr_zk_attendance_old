@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_hr_employee_attendance_report_tree" model="ir.ui.view">
+        <field name="name">hr.employee.attendance.report.tree</field>
+        <field name="model">hr.employee</field>
+        <field name="arch" type="xml">
+            <tree string="Attendance Analysis" delete="false">
+                <field name="name" string="Employee"/>
+                <field name="x_working_days" string="Presence Ratio"/>
+                <field name="x_week_offs" string="Week Offs" optional="hide"/>
+                <field name="x_early_in" string="Early In"/>
+                <field name="x_late_in" string="Late In"/>
+                <field name="x_on_time_check_in" string="On Time Check In"/>
+                <field name="x_on_time_check_out" string="On Time Check Out"/>
+                <field name="x_early_out" string="Early Out"/>
+                <field name="x_late_out" string="Late Out"/>
+                <field name="x_absent_days" string="Absent"/>
+                <field name="x_worked_hours" string="Work Time" widget="float_time"/>
+                <field name="x_extra_work_hours" string="Extra Work" widget="float_time"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_hr_employee_attendance_report_search" model="ir.ui.view">
+        <field name="name">hr.employee.attendance.report.search</field>
+        <field name="model">hr.employee</field>
+        <field name="arch" type="xml">
+            <search string="Search Attendance Analysis">
+                <field name="name" string="Employee"/>
+                <separator/>
+                <filter string="Today" name="today" domain="[]" context="{'report_date_filter': 'today'}"/>
+                <filter string="Yesterday" name="yesterday" domain="[]" context="{'report_date_filter': 'yesterday'}"/>
+                <filter string="This Month" name="this_month" domain="[]" context="{'report_date_filter': 'this_month'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_hr_attendance_report" model="ir.actions.act_window">
+        <field name="name">Attendance Analysis Report</field>
+        <field name="res_model">hr.employee</field>
+        <field name="view_mode">tree</field>
+        <field name="view_id" ref="view_hr_employee_attendance_report_tree"/>
+        <field name="search_view_id" ref="view_hr_employee_attendance_report_search"/>
+        <field name="context">{'search_default_this_month': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No employee records found.
+            </p>
+            <p>
+                This report analyzes employee attendance data based on the selected period in the search bar.
+            </p>
+        </field>
+    </record>
+
+    <menuitem id="menu_hr_attendance_report"
+              name="Attendance Report"
+              parent="biometric_device_details_menu"
+              action="action_hr_attendance_report"
+              sequence="30"/>
+</odoo>

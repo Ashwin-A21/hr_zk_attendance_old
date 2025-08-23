@@ -123,7 +123,7 @@ class BiometricDeviceDetails(models.Model):
             machine.action_download_attendance()
 
     def action_download_attendance(self):
-        use_sample_data = True
+        use_sample_data = False
         _logger.info("--- Starting attendance download ---")
 
         attendance_data = []

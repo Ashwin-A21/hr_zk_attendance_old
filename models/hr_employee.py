@@ -1,6 +1,6 @@
 # hr_zk_attendance/models/hr_employee.py
 from odoo import fields, models, api
-from datetime import timedelta, datetime, time
+from datetime import timedelta, datetime, time, date
 import pytz
 
 
@@ -13,18 +13,30 @@ class HrEmployee(models.Model):
     worksheet_ids = fields.One2many('hr.employee.worksheet', 'employee_id',
                                     string='Worksheet')
 
+    @api.model_create_multi
+    def create(self, vals_list):
+        """
+        Override create to automatically generate a default worksheet for
+        new employees.
+        """
+        employees = super().create(vals_list)
+        all_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        worksheet_vals_list = []
+        for employee in employees:
+            for day in all_days:
+                worksheet_vals_list.append({
+                    'employee_id': employee.id,
+                    'day_of_week': day,
+                    'work_from': 8.5,  # Explicitly set default
+                    'work_to': 16.0,   # Explicitly set default
+                })
+        self.env['hr.employee.worksheet'].create(worksheet_vals_list)
+        return employees
+
     def _compute_worksheet_times(self):
         """Compute method to get times from the worksheet lines."""
         for employee in self:
             all_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-            if len(employee.worksheet_ids) < 7:
-                existing_days = employee.worksheet_ids.mapped('day_of_week')
-                missing_days = [d for d in all_days if d not in existing_days]
-                if missing_days:
-                    worksheet_vals = [{'employee_id': employee.id, 'day_of_week': day} for day in missing_days]
-                    self.env['hr.employee.worksheet'].create(worksheet_vals)
-                    employee.invalidate_recordset(['worksheet_ids'])
-
             worksheet_map = {w.day_of_week: w for w in employee.worksheet_ids}
             for day in all_days:
                 day_line = worksheet_map.get(day)
@@ -107,6 +119,91 @@ class HrEmployee(models.Model):
     sunday_to = fields.Float(string="Sunday To", compute='_compute_worksheet_times',
                              inverse=lambda self: self._set_day_value('sunday', to_time=self[0].sunday_to), store=False)
 
+    x_working_days = fields.Char(string="Working Days", compute='_compute_attendance_report_data')
+    x_week_offs = fields.Integer(string="Week Offs", compute='_compute_attendance_report_data')
+    x_early_in = fields.Integer(string="Early In", compute='_compute_attendance_report_data')
+    x_late_in = fields.Integer(string="Late In", compute='_compute_attendance_report_data')
+    x_on_time_check_in = fields.Integer(string="On Time Check-In", compute='_compute_attendance_report_data')
+    x_on_time_check_out = fields.Integer(string="On Time Check-Out", compute='_compute_attendance_report_data')
+    x_early_out = fields.Integer(string="Early Out", compute='_compute_attendance_report_data')
+    x_late_out = fields.Integer(string="Late Out", compute='_compute_attendance_report_data')
+    x_absent_days = fields.Integer(string="Absent Days", compute='_compute_attendance_report_data')
+    x_worked_hours = fields.Float(string="Total Work Time", compute='_compute_attendance_report_data')
+    x_extra_work_hours = fields.Float(string="Total Extra Work", compute='_compute_attendance_report_data')
+
+    def _compute_attendance_report_data(self):
+        """Computes attendance statistics based on context date filters."""
+        today = date.today()
+        date_from = today.replace(day=1)
+        date_to = today
+
+        date_filter = self.env.context.get('report_date_filter')
+        if date_filter == 'today':
+            date_from = date_to = today
+        elif date_filter == 'yesterday':
+            date_from = date_to = today - timedelta(days=1)
+        elif date_filter == 'this_month':
+            date_from = today.replace(day=1)
+            next_month = date_from.replace(day=28) + timedelta(days=4)
+            date_to = next_month - timedelta(days=next_month.day)
+
+        Attendance = self.env['hr.attendance']
+        for employee in self:
+            working_days, absent_days, week_offs = 0, 0, 0
+            present_dates = set()
+
+            current_date = date_from
+            while current_date <= date_to:
+                day_of_week_str = current_date.strftime('%A').lower()
+                worksheet_entry = employee.worksheet_ids.filtered(
+                    lambda w: w.day_of_week == day_of_week_str
+                )[:1]
+                
+                # *** LOGIC CORRECTION STARTS HERE ***
+                if worksheet_entry:
+                    is_week_off = worksheet_entry.work_from == 0 and worksheet_entry.work_to == 0
+                    if is_week_off:
+                        week_offs += 1
+                    else:
+                        working_days += 1
+                # Days without any worksheet entry are neither working days nor week offs.
+                # *** LOGIC CORRECTION ENDS HERE ***
+
+                current_date += timedelta(days=1)
+
+            attendances = Attendance.search([
+                ('employee_id', '=', employee.id),
+                ('check_in', '>=', datetime.combine(date_from, time.min)),
+                ('check_in', '<=', datetime.combine(date_to, time.max)),
+            ])
+
+            if attendances:
+                status_tags = attendances.mapped('status_ids.name')
+                present_dates = set(fields.Datetime.context_timestamp(employee, att.check_in).date() for att in attendances)
+
+                employee.x_early_in = status_tags.count('early_checkin')
+                employee.x_late_in = status_tags.count('late_checkin')
+                employee.x_early_out = status_tags.count('early_checkout')
+                employee.x_late_out = status_tags.count('late_checkout')
+                employee.x_worked_hours = sum(attendances.mapped('worked_hours'))
+                employee.x_extra_work_hours = sum(attendances.mapped('overtime_hours'))
+            else:
+                employee.x_early_in = 0
+                employee.x_late_in = 0
+                employee.x_early_out = 0
+                employee.x_late_out = 0
+                employee.x_worked_hours = 0.0
+                employee.x_extra_work_hours = 0.0
+
+            present_days_count = len(present_dates)
+            absent_days = working_days - present_days_count
+
+            employee.x_working_days = f"{present_days_count}/{working_days}"
+            employee.x_week_offs = week_offs
+            employee.x_absent_days = absent_days if absent_days > 0 else 0
+            employee.x_on_time_check_in = present_days_count - employee.x_late_in
+            employee.x_on_time_check_out = present_days_count - employee.x_early_out
+
 
 class AttendanceStatusTag(models.Model):
     _name = 'hr.attendance.status.tag'
@@ -119,7 +216,6 @@ class AttendanceStatusTag(models.Model):
 class HrAttendance(models.Model):
     _inherit = 'hr.attendance'
 
-    # NEW Fields to track original state
     was_missing_checkin = fields.Boolean(
         string="Was Missing Check-In", readonly=True, copy=False,
         help="Set if the check-in was originally missing and auto-corrected.")
@@ -179,7 +275,6 @@ class HrAttendance(models.Model):
                 att.status_ids = False
                 continue
 
-            # NEW LOGIC: Check persistent flags first
             if att.was_missing_checkin and not att.is_corrected:
                 status_flags.add("missing_checkin")
             if att.was_missing_checkout and not att.is_corrected:

@@ -41,6 +41,7 @@
         'views/daily_attendance_views.xml',
         'views/biometric_device_attendance_menus.xml',
         'views/hr_employee_worksheet_views.xml',  
+        'views/hr_attendance_report_views.xml',
         'data/download_data.xml',
         'data/ir_cron_data.xml'
     ],
