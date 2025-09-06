@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # hr_zk_attendance/__manifest__.py
 {
     'name': 'Biometric Device Integration',
@@ -7,6 +8,14 @@
     'description': "This module integrates Odoo with the biometric device(Model: ZKteco uFace 202),odoo17,odoo,hr,attendance",
     'author': 'Concept Solutions ',
     'website': 'https://www.csloman.com',
+=======
+{
+    'name': 'Biometric Device Integration',
+    'version': '17.0.1.3.0',
+    'category': 'Human Resources',
+    'summary': "Integrating Biometric Device (Model: ZKteco uFace 202) With HR Attendance (Face + Thumb)",
+    'description': "This module integrates Odoo with the biometric device(Model: ZKteco uFace 202),odoo17,odoo,hr,attendance",
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
     'depends': ['base_setup', 'hr_attendance', 'resource'],
     'external_dependencies': {
         'python': ['pyzk'],

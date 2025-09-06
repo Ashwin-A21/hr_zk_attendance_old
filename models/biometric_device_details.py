@@ -157,6 +157,7 @@ class BiometricDeviceDetails(models.Model):
                 _logger.warning("No new attendance data found to process.")
                 continue
 
+<<<<<<< HEAD
             # **FIX**: Set the last download time before filtering
             latest_punch_time = max(att.timestamp for att in attendance_data)
 
@@ -237,6 +238,90 @@ class BiometricDeviceDetails(models.Model):
 
             _logger.info("--- Attendance download finished ---")
 
+=======
+            if device.last_download_time:
+                attendance_data = [att for att in attendance_data if att.timestamp > device.last_download_time]
+
+            if not attendance_data:
+                _logger.warning("No new attendance data found after filtering.")
+                continue
+
+            zk_attendance = self.env['zk.machine.attendance']
+            # Get operating timezone from user preferences or default to UTC
+            operating_tz_str = self.env.user.tz or 'UTC'
+            operating_tz = pytz.timezone(operating_tz_str)
+
+            punches_by_workday = {}
+
+            for punch in sorted(attendance_data, key=lambda p: p.timestamp):
+                employee = self.env['hr.employee'].search([('device_id_num', '=', str(punch.user_id))], limit=1)
+                if not employee:
+                    continue
+
+                # Convert device timestamp to local timezone
+                raw_dt = punch.timestamp
+                if getattr(raw_dt, 'tzinfo', None) is None:
+                    local_dt = operating_tz.localize(raw_dt, is_dst=None)
+                else:
+                    local_dt = raw_dt.astimezone(operating_tz)
+
+                # Convert to UTC for database storage
+                utc_dt = local_dt.astimezone(pytz.utc)
+                utc_str = fields.Datetime.to_string(utc_dt)
+                local_day = local_dt.date()
+
+                # Save raw punch data
+                existing_punch = zk_attendance.search([
+                    ('employee_id', '=', employee.id),
+                    ('punching_time', '=', utc_str)
+                ], limit=1)
+
+                if not existing_punch:
+                    zk_attendance.create({
+                        'employee_id': employee.id,
+                        'device_id_num': str(punch.user_id),
+                        'punch_type': str(punch.punch),
+                        'attendance_type': str(punch.status),
+                        'punching_time': utc_str,
+                        'address_id': device.address_id.id,
+                    })
+
+                # Group punches by employee and workday
+                workday = self._get_workday_for_punch(employee, local_dt, operating_tz)
+                if not workday:
+                    _logger.warning(f"Could not determine workday for punch at {local_dt} for employee {employee.name}")
+                    continue
+
+                punches_by_workday.setdefault((employee.id, workday), []).append({
+                    "timestamp": utc_dt.replace(tzinfo=None),  # Store as naive datetime for processing
+                    "local_time": local_dt
+                })
+
+            # Process all punches
+            all_workdays = set(day for (_, day) in punches_by_workday.keys())
+            all_employees = self.env['hr.employee'].browse(list(set(emp_id for (emp_id, _) in punches_by_workday.keys())))
+
+            for employee in all_employees:
+                for workday in all_workdays:
+                    # **FIX**: Pass the entire shift dictionary from the employee model
+                    shift = employee._get_employee_shift_for_day(workday, operating_tz)
+                    if not shift:
+                        continue
+
+                    # Get punches for this employee and workday
+                    punches = [punch_data["timestamp"] for punch_data in punches_by_workday.get((employee.id, workday), [])]
+
+                    # Process attendance
+                    result = self.process_attendance(punches, employee, shift, operating_tz)
+                    self._create_or_update_attendance(result, employee, self.env['hr.attendance'])
+
+            # Update last download time
+            if attendance_data:
+                device.last_download_time = max(att.timestamp for att in attendance_data)
+
+            _logger.info("--- Attendance download finished ---")
+
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
         return {
             'type': 'ir.actions.client',
             'tag': 'display_notification',
@@ -255,6 +340,7 @@ class BiometricDeviceDetails(models.Model):
 
         # Check if this punch belongs to previous day's night shift
         prev_date = punch_date - timedelta(days=1)
+<<<<<<< HEAD
         prev_shift = employee._get_employee_shift_for_day(prev_date, operating_tz)
         if prev_shift and not prev_shift.get('is_holiday') and prev_shift['is_night_shift'] and punch_time_local <= (prev_shift['end_local'] + timedelta(hours=4)):
             return prev_date
@@ -262,6 +348,17 @@ class BiometricDeviceDetails(models.Model):
         # Check current day's shift
         current_shift = employee._get_employee_shift_for_day(punch_date, operating_tz)
         if current_shift and not current_shift.get('is_holiday') and punch_time_local >= (current_shift['start_local'] - timedelta(hours=3)):
+=======
+        # **FIX**: Use employee method
+        prev_shift = employee._get_employee_shift_for_day(prev_date, operating_tz)
+        if prev_shift and prev_shift['is_night_shift'] and punch_time_local <= (prev_shift['end_local'] + timedelta(hours=4)):
+            return prev_date
+
+        # Check current day's shift
+        # **FIX**: Use employee method
+        current_shift = employee._get_employee_shift_for_day(punch_date, operating_tz)
+        if current_shift and punch_time_local >= (current_shift['start_local'] - timedelta(hours=3)):
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
             return punch_date
 
         return punch_date
@@ -273,6 +370,7 @@ class BiometricDeviceDetails(models.Model):
         check_out = None
         status_flags = []
 
+<<<<<<< HEAD
         # FIXED LOGIC: Consistently get first and last punch for check-in/out
         if punches:
             check_in = punches[0]
@@ -373,6 +471,96 @@ class BiometricDeviceDetails(models.Model):
         else:
             status_flags.append("absent")
 
+=======
+        shift_start_utc = shift['start_local'].astimezone(pytz.utc).replace(tzinfo=None)
+        shift_end_utc = shift['end_local'].astimezone(pytz.utc).replace(tzinfo=None)
+        break_from_utc = shift.get('break_from_local').astimezone(pytz.utc).replace(tzinfo=None) if shift.get('break_from_local') else None
+        break_to_utc = shift.get('break_to_local').astimezone(pytz.utc).replace(tzinfo=None) if shift.get('break_to_local') else None
+
+        planned_hours = shift.get('planned_work_hours', 0.0)
+
+        if len(punches) == 1:
+            punch_time = punches[0]
+            if abs(punch_time - shift_start_utc) <= abs(punch_time - shift_end_utc):
+                check_in = punch_time
+            else:
+                check_out = punch_time
+        elif len(punches) > 1:
+            check_in = punches[0]
+            check_out = punches[-1]
+
+        results = {
+            "employee_id": employee.id,
+            "date": punches[0].date() if punches else None,
+            "check_in": check_in,
+            "check_out": check_out,
+            "status": [],
+            "worked_hours": 0,
+            "extra_hours": 0,
+            "has_punches": bool(punches),
+        }
+
+        if check_in and check_out:
+            if check_out < check_in:
+                check_out = shift_end_utc
+                status_flags.append("invalid_order_fixed")
+
+            # Calculate break overlap
+            break_overlap_seconds = 0
+            if break_from_utc and break_to_utc:
+                overlap_start = max(check_in, break_from_utc)
+                overlap_end = min(check_out, break_to_utc)
+                if overlap_end > overlap_start:
+                    break_overlap_seconds = (overlap_end - overlap_start).total_seconds()
+
+            total_duration_seconds = (check_out - check_in).total_seconds()
+            worked_seconds = total_duration_seconds - break_overlap_seconds
+            worked_hours = worked_seconds / 3600.0
+            results["worked_hours"] = round(worked_hours, 2)
+
+            extra_hours = worked_hours - planned_hours
+            results["extra_hours"] = round(extra_hours, 2)
+
+            if check_in < shift_start_utc:
+                status_flags.append("early_checkin")
+            elif check_in > shift_start_utc:
+                status_flags.append("late_checkin")
+
+            if check_out < shift_end_utc:
+                status_flags.append("early_checkout")
+            elif check_out > shift_end_utc:
+                status_flags.append("late_checkout")
+
+            if extra_hours < -0.1:
+                status_flags.append("less_hours")
+            elif extra_hours > 0.1:
+                status_flags.append("extra_hours")
+
+        elif check_in and not check_out:
+            status_flags.append("Missed checkout")
+            if datetime.now() >= check_in + timedelta(hours=18):
+                check_out = check_in + timedelta(hours=18)
+                results["check_out"] = check_out
+                worked_hours = 18.0
+                results["worked_hours"] = worked_hours
+                extra_hours = worked_hours - planned_hours
+                results["extra_hours"] = round(extra_hours, 2)
+
+        elif check_out and not check_in:
+            status_flags.append("Missed checkin")
+            check_in = shift_start_utc
+            results["check_in"] = check_in
+            worked_hours = (check_out - check_in).total_seconds() / 3600.0
+            results["worked_hours"] = round(worked_hours, 2)
+            extra_hours = worked_hours - planned_hours
+            results["extra_hours"] = round(extra_hours, 2)
+            if extra_hours > 0.1:
+                 status_flags.append("extra_hours")
+
+        else:
+            status_flags.append("absent")
+
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
         results["status"] = status_flags
         return results
 
@@ -418,6 +606,7 @@ class BiometricDeviceDetails(models.Model):
             _logger.info(f"Skipping auto-update for manually corrected attendance record {existing.id} for {employee.name} on {workday_date}.")
             return
 
+<<<<<<< HEAD
         attendance_rec = None
         if existing:
             # FIX: Only update check_out, worked_hours, status_ids, etc.
@@ -430,12 +619,19 @@ class BiometricDeviceDetails(models.Model):
                 'was_missing_checkout': "Missed checkout" in status_list,
             }
             existing.write(update_vals)
+=======
+        # **FIX**: Consolidate attendance record reference
+        attendance_rec = None
+        if existing:
+            existing.write(vals)
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
             attendance_rec = existing
         else:
             attendance_rec = hr_attendance.create(vals)
 
         if not attendance_rec:
             return
+<<<<<<< HEAD
             
         hr_admin_group = self.env.ref('hr_attendance.group_hr_attendance_manager', raise_if_not_found=False)
         if not hr_admin_group:
@@ -449,6 +645,22 @@ class BiometricDeviceDetails(models.Model):
             ci_str = ci_local.strftime("%Y-%m-%d %H:%M")
 
         if attendance_rec.check_out:
+=======
+
+        # Notification logic remains the same...
+        hr_admin_group = self.env.ref('hr_attendance.group_hr_attendance_manager', raise_if_not_found=False)
+        if not hr_admin_group:
+            return
+            
+        hr_admin_users = self.env['res.users'].search([('groups_id', 'in', hr_admin_group.ids)])
+
+        ci_str, co_str = "", ""
+        if result["check_in"]:
+            ci_local = fields.Datetime.context_timestamp(attendance_rec, attendance_rec.check_in)
+            ci_str = ci_local.strftime("%Y-%m-%d %H:%M")
+
+        if result["check_out"]:
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
             co_local = fields.Datetime.context_timestamp(attendance_rec, attendance_rec.check_out)
             co_str = co_local.strftime("%Y-%m-%d %H:%M")
 
@@ -504,7 +716,11 @@ class BiometricDeviceDetails(models.Model):
                 subtype_xmlid="mail.mt_note"
             )
 
+<<<<<<< HEAD
         if "Missed checkin" in status_list and attendance_rec.check_in:
+=======
+        if "Missed checkin" in status_list and result["check_in"]:
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
             attendance_rec.message_post(
                 body=Markup(f"""
                     <p>
@@ -520,7 +736,11 @@ class BiometricDeviceDetails(models.Model):
                 subtype_xmlid="mail.mt_note"
             )
 
+<<<<<<< HEAD
         if "Missed checkout" in status_list and attendance_rec.check_out:
+=======
+        if "Missed checkout" in status_list and result["check_out"]:
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
             attendance_rec.message_post(
                 body=Markup(f"""
                     <p>

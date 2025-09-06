@@ -3,6 +3,7 @@ from datetime import datetime
 data = [
  
     # early 
+<<<<<<< HEAD
     # {"user_id": 111, "timestamp": datetime(2025, 8, 10, 9, 0), "status": 4, "punch": 0},
     # {"user_id": 111, "timestamp": datetime(2025, 8, 11, 15, 0), "status": 4, "punch": 0},
     # # {"user_id": 111, "timestamp": datetime(2025, 8, 10, 18, 0), "status": 4, "punch": 0},
@@ -26,6 +27,30 @@ data = [
 
      {"user_id": 444, "timestamp": datetime(2025, 9, 1, 9, 45), "status": 4  },
      {"user_id": 444, "timestamp": datetime(2025, 9, 1, 15, 45), "status": 4  },
+=======
+    {"user_id": 111, "timestamp": datetime(2025, 8, 10, 9, 0), "status": 4, "punch": 0},
+    {"user_id": 111, "timestamp": datetime(2025, 8, 11, 15, 0), "status": 4, "punch": 0},
+    # {"user_id": 111, "timestamp": datetime(2025, 8, 10, 18, 0), "status": 4, "punch": 0},
+    #normal
+
+    {"user_id": 222, "timestamp": datetime(2025, 8, 12, 8, 58, 0), "status": 4, "punch": 0},
+    {"user_id": 222, "timestamp": datetime(2025, 8, 12, 12, 1, 0), "status": 4, "punch": 0},
+    {"user_id": 222, "timestamp": datetime(2025, 8, 12, 12, 59, 0), "status": 4, "punch": 0},
+    {"user_id": 222, "timestamp": datetime(2025, 8, 12, 17, 2, 0), "status": 4, "punch": 0},
+
+    # Early Start, Late Finish with Lunch Break (Employee 333)
+    # Check-in, Break-out, Break-in, Check-out
+    {"user_id": 333, "timestamp": datetime(2025, 8, 12, 7, 15, 0), "status": 4, "punch": 0},
+    {"user_id": 333, "timestamp": datetime(2025, 8, 12, 12, 30, 0), "status": 4, "punch": 0},
+    {"user_id": 333, "timestamp": datetime(2025, 8, 12, 13, 28, 0), "status": 4, "punch": 0},
+    {"user_id": 333, "timestamp": datetime(2025, 8, 12, 18, 45, 0), "status": 4, "punch": 0},
+
+     {"user_id": 444, "timestamp": datetime(2025, 8, 13, 8, 45, 0), "status": 4, "punch": 0},
+
+    {"user_id": 555, "timestamp": datetime(2025, 8, 13, 17, 40, 0), "status": 4, "punch": 0},
+
+     {"user_id": 222, "timestamp": datetime(2025, 8, 26, 9, 45), "status": 4, "punch": 0},
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b
 
     # {"user_id": 111, "timestamp": datetime(2025, 8, 11, 8, 30), "status": 4, "punch": 0},
     # {"user_id": 111, "timestamp": datetime(2025, 8, 11, 18, 0), "status": 4, "punch": 0},

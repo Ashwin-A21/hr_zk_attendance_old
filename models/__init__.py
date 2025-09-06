@@ -25,5 +25,9 @@ from . import daily_attendance
 from . import hr_employee
 from . import hr_employee_worksheet
 from . import hr_attendance
+<<<<<<< HEAD
 from . import resource_calendar
 from . import hr_night_shift_schedule
+=======
+from . import resource_calendar
+>>>>>>> a58772681a33aa74879ebd15d5baa7319d4cb73b

@@ -132,6 +132,9 @@ class HrEmployee(models.Model):
         user_tz = pytz.timezone(self.env.user.tz or 'UTC')
         today = fields.Date.context_today(self, timestamp=datetime.now(user_tz))
 
+        user_tz = pytz.timezone(self.env.user.tz or 'UTC')
+        today = fields.Date.context_today(self, timestamp=datetime.now(user_tz))
+
         date_from = today.replace(day=1)
         date_to = today
 
@@ -205,12 +208,21 @@ class HrEmployee(models.Model):
                         absent_days += 1
                 else:
                     if has_attendance:
+                        absent_days += 1
+                else:
+                    if has_attendance:
                         working_days += 1
+                        present_days += 1
+                    else:
+                        week_offs += 1
                         present_days += 1
                     else:
                         week_offs += 1
                 current_date += timedelta(days=1)
 
+            employee.x_working_days = f"{present_days}/{working_days}"
+            employee.x_week_offs = week_offs
+            employee.x_absent_days = absent_days
             employee.x_working_days = f"{present_days}/{working_days}"
             employee.x_week_offs = week_offs
             employee.x_absent_days = absent_days
@@ -232,7 +244,21 @@ class HrEmployee(models.Model):
                 on_time_out = checked_out_days - (
                         employee.x_early_out + employee.x_late_out)
                 employee.x_on_time_check_out = max(0, on_time_out)
+                employee.x_extra_work_hours = sum(
+                    attendances.mapped('overtime_hours'))
+                on_time_in = present_days - (
+                        employee.x_late_in + employee.x_early_in)
+                employee.x_on_time_check_in = max(0, on_time_in)
+
+                checked_out_days = len(attendances.filtered(lambda a: a.check_out))
+                on_time_out = checked_out_days - (
+                        employee.x_early_out + employee.x_late_out)
+                employee.x_on_time_check_out = max(0, on_time_out)
             else:
+                reset_fields()
+                employee.x_working_days = f"0/{working_days}"
+                employee.x_week_offs = week_offs
+                employee.x_absent_days = absent_days
                 reset_fields()
                 employee.x_working_days = f"0/{working_days}"
                 employee.x_week_offs = week_offs
@@ -250,15 +276,23 @@ class HrAttendance(models.Model):
     was_missing_checkin = fields.Boolean(string="Was Missing Check-In", readonly=True, copy=False)
     was_missing_checkout = fields.Boolean(string="Was Missing Check-Out", readonly=True, copy=False)
     worked_hours = fields.Float(string='Worked Hours', compute='_compute_worked_hours', store=True, readonly=True)
+    was_missing_checkin = fields.Boolean(string="Was Missing Check-In", readonly=True, copy=False)
+    was_missing_checkout = fields.Boolean(string="Was Missing Check-Out", readonly=True, copy=False)
+    worked_hours = fields.Float(string='Worked Hours', compute='_compute_worked_hours', store=True, readonly=True)
 
+    @api.depends('check_in', 'check_out', 'employee_id.resource_calendar_id')
     @api.depends('check_in', 'check_out', 'employee_id.resource_calendar_id')
     def _compute_worked_hours(self):
         """
         # FIXED LOGIC
         Calculates worked hours, accurately subtracting ONLY the overlapping
         portion of the scheduled break time.
+        # FIXED LOGIC
+        Calculates worked hours, accurately subtracting ONLY the overlapping
+        portion of the scheduled break time.
         """
         for att in self:
+            if not att.check_out or not att.check_in or not att.employee_id:
             if not att.check_out or not att.check_in or not att.employee_id:
                 att.worked_hours = 0.0
                 continue
@@ -301,6 +335,8 @@ class HrAttendance(models.Model):
 
     @api.depends('check_in', 'check_out', 'employee_id.resource_calendar_id.worksheet_ids',
                  'is_corrected', 'was_missing_checkin', 'was_missing_checkout')
+    @api.depends('check_in', 'check_out', 'employee_id.resource_calendar_id.worksheet_ids',
+                 'is_corrected', 'was_missing_checkin', 'was_missing_checkout')
     def _compute_status_ids(self):
         StatusTag = self.env['hr.attendance.status.tag']
         status_tag_cache = {tag.name: tag for tag in StatusTag.search([])}
@@ -319,12 +355,18 @@ class HrAttendance(models.Model):
 
             if att.was_missing_checkin and not att.is_corrected:
                 status_flags.add("Missed checkin")
+                status_flags.add("Missed checkin")
             if att.was_missing_checkout and not att.is_corrected:
+                status_flags.add("Missed checkout")
                 status_flags.add("Missed checkout")
 
             user_tz = pytz.timezone(
                 att.employee_id.tz or self.env.user.tz or 'UTC')
+            user_tz = pytz.timezone(
+                att.employee_id.tz or self.env.user.tz or 'UTC')
             check_in_local = att.check_in.astimezone(user_tz)
+            shift = att.employee_id._get_employee_shift_for_day(
+                check_in_local.date(), user_tz)
             shift = att.employee_id._get_employee_shift_for_day(
                 check_in_local.date(), user_tz)
 
@@ -356,6 +398,8 @@ class HrAttendance(models.Model):
 
                 worked_seconds = att.worked_hours * 3600
                 planned_seconds = (shift['planned_work_hours'] * 3600)
+                worked_seconds = att.worked_hours * 3600
+                planned_seconds = (shift['planned_work_hours'] * 3600)
 
                 if worked_seconds > planned_seconds + 60:
                     status_flags.add("extra_hours")
@@ -365,21 +409,31 @@ class HrAttendance(models.Model):
                 if att.check_in.date() < datetime.now(
                         user_tz).date() and not att.was_missing_checkout:
                     status_flags.add("Missed checkout")
+                if att.check_in.date() < datetime.now(
+                        user_tz).date() and not att.was_missing_checkout:
+                    status_flags.add("Missed checkout")
 
             status_tags = [get_tag(flag) for flag in status_flags]
             att.status_ids = [(6, 0, [tag.id for tag in status_tags])]
 
     @api.depends('worked_hours', 'employee_id.resource_calendar_id')
+    @api.depends('worked_hours', 'employee_id.resource_calendar_id')
     def _compute_overtime_hours(self):
         """Calculates overtime based on the new accurate worked_hours."""
+        """Calculates overtime based on the new accurate worked_hours."""
         for att in self:
+            if not att.check_in or not att.employee_id:
             if not att.check_in or not att.employee_id:
                 att.overtime_hours = 0.0
                 continue
 
             user_tz = pytz.timezone(
                 att.employee_id.tz or self.env.user.tz or 'UTC')
+            user_tz = pytz.timezone(
+                att.employee_id.tz or self.env.user.tz or 'UTC')
             check_in_local = att.check_in.astimezone(user_tz)
+            shift = att.employee_id._get_employee_shift_for_day(
+                check_in_local.date(), user_tz)
             shift = att.employee_id._get_employee_shift_for_day(
                 check_in_local.date(), user_tz)
 
@@ -391,6 +445,7 @@ class HrAttendance(models.Model):
                 att.overtime_hours = 0.0
                 continue
 
+            att.overtime_hours = att.worked_hours - shift['planned_work_hours']
             att.overtime_hours = att.worked_hours - shift['planned_work_hours']
 
     @api.constrains('check_in', 'check_out', 'employee_id')
