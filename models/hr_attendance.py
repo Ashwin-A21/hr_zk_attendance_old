@@ -1,4 +1,3 @@
-# hr_zk_attendance/models/hr_attendance.py
 from odoo import models, api, fields
 from markupsafe import Markup
 import pytz

@@ -28,7 +28,7 @@
                             attendance records from the Device and Odoo?"/>
                     <button name="action_restart_device" string="Restart"
                             type="object" class="oe_highlight"
-                            confirm="Are you sure you want Restart the Biometric
+                            confirm="Are you sure you want to Restart the Biometric
                             Device?"/>
                 </header>
                 <sheet>
@@ -38,6 +38,7 @@
                         <field name="port_number"/>
                         <field name="address_id"/>
                         <field name="days_to_sync"/>
+                        <field name="last_download_time" />
                     </group>
                     <button name="action_test_connection"
                             type="object" class="btn btn-secondary">

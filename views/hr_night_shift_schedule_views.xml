@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <record id="hr_night_shift_schedule_view_form" model="ir.ui.view">
+        <field name="name">hr.night.shift.schedule.view.form</field>
+        <field name="model">hr.night.shift.schedule</field>
+        <field name="arch" type="xml">
+            <form string="Night Shift Schedule" create="false" delete="false">
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="date_from"/>
+                            <field name="date_to"/>
+                             <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                        <group string="Shift Timings">
+                            <label for="time_from" string="Work Time"/>
+                            <div class="o_row">
+                               <field name="time_from" widget="float_time"/>
+                               <span>-</span>
+                               <field name="time_to" widget="float_time"/>
+                            </div>
+                             <label for="break_from" string="Break Time"/>
+                             <div class="o_row">
+                               <field name="break_from" widget="float_time"/>
+                               <span>-</span>
+                               <field name="break_to" widget="float_time"/>
+                            </div>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Employees" name="employees">
+                            <field name="employee_ids" widget="many2many_tags" options="{'no_create': True}"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                 <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="hr_night_shift_schedule_action" model="ir.actions.act_window">
+        <field name="name">Night Shift Schedule</field>
+        <field name="res_model">hr.night.shift.schedule</field>
+        <field name="view_mode">form</field>
+        <field name="res_id" ref="hr_zk_attendance.main_night_shift_schedule"/>
+    </record>
+
+    <menuitem id="menu_hr_night_shift_schedule_main"
+              name="Night Shift"
+              parent="hr_attendance.menu_hr_attendance_root"
+              action="hr_night_shift_schedule_action"
+              sequence="100"/>
+</odoo>

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <record id="resource_calendar_view_form_inherit_worksheet" model="ir.ui.view">
+        <field name="name">resource.calendar.view.form.inherit.worksheet</field>
+        <field name="model">resource.calendar</field>
+        <field name="inherit_id" ref="resource.resource_calendar_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Biometric Worksheet" name="biometric_worksheet">
+                    <field name="worksheet_ids" invisible="1"/>
+                    <group>
+                        <group string="Working Hours">
+                            <label for="monday_from" string="Monday"/>
+                            <div class="o_row">
+                                <field name="monday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="monday_to" widget="float_time" nolabel="1"/>
+                                <span class="ml-4">Break:</span>
+                                <field name="monday_break_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="monday_break_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="tuesday_from" string="Tuesday"/>
+                            <div class="o_row">
+                                <field name="tuesday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="tuesday_to" widget="float_time" nolabel="1"/>
+                                <span class="ml-4">Break:</span>
+                                <field name="tuesday_break_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="tuesday_break_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="wednesday_from" string="Wednesday"/>
+                            <div class="o_row">
+                                <field name="wednesday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="wednesday_to" widget="float_time" nolabel="1"/>
+                                <span class="ml-4">Break:</span>
+                                <field name="wednesday_break_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="wednesday_break_to" widget="float_time" nolabel="1"/>
+                            </div>
+                             <label for="thursday_from" string="Thursday"/>
+                            <div class="o_row">
+                                <field name="thursday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="thursday_to" widget="float_time" nolabel="1"/>
+                                <span class="ml-4">Break:</span>
+                                <field name="thursday_break_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="thursday_break_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="friday_from" string="Friday"/>
+                            <div class="o_row">
+                                <field name="friday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="friday_to" widget="float_time" nolabel="1"/>
+                                <span class="ml-4">Break:</span>
+                                <field name="friday_break_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="friday_break_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="saturday_from" string="Saturday"/>
+                            <div class="o_row">
+                                <field name="saturday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="saturday_to" widget="float_time" nolabel="1"/>
+                                <span class="ml-4">Break:</span>
+                                <field name="saturday_break_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="saturday_break_to" widget="float_time" nolabel="1"/>
+                            </div>
+                            <label for="sunday_from" string="Sunday"/>
+                            <div class="o_row">
+                                <field name="sunday_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="sunday_to" widget="float_time" nolabel="1"/>
+                                <span class="ml-4">Break:</span>
+                                <field name="sunday_break_from" widget="float_time" nolabel="1"/>
+                                <span> - </span>
+                                <field name="sunday_break_to" widget="float_time" nolabel="1"/>
+                            </div>
+                        </group>
+                    </group>
+                     <div class="alert alert-info" role="alert">
+                         Note: These timings are used by the Biometric Integration module to calculate attendance statuses (Late In, Early Out, etc.). Use same time such as 11:00 - 11:00 for no break.
+                    </div>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
