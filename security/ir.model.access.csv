@@ -4,3 +4,4 @@ access_daily_attendance,access.daily.attendance,model_daily_attendance,base.grou
 access_zk_machine_attendance,access.zk.machine.attendance,model_zk_machine_attendance,base.group_user,1,1,1,1
 access_hr_attendance_status_tag,hr.attendance.status.tag access,model_hr_attendance_status_tag,base.group_user,1,1,1,1
 access_hr_employee_worksheet,hr.employee.worksheet.access,model_hr_employee_worksheet,hr.group_hr_user,1,1,1,1
+access_hr_night_shift_schedule,access.hr.night.shift.schedule,model_hr_night_shift_schedule,hr_attendance.group_hr_attendance_manager,1,1,1,1
