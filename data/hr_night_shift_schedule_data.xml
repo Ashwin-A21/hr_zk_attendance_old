@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <record id="main_night_shift_schedule" model="hr.night.shift.schedule">
+            <field name="name">Main Night Shift Schedule</field>
+            <field name="date_from" eval="time.strftime('%Y-01-01')"/>
+            <field name="date_to" eval="time.strftime('%Y-12-31')"/>
+            <field name="time_from">18.0</field>
+            <field name="time_to">3.0</field>
+            <field name="break_from">22.0</field>
+            <field name="break_to">23.0</field>
+        </record>
+    </data>
+</odoo>

@@ -31,8 +31,10 @@ class BiometricDeviceDetails(models.Model):
                                  default=lambda
                                      self: self.env.user.company_id.id,
                                  help='Current Company')
-    days_to_sync = fields.Integer(string="Days to Sync", default=30,
+    days_to_sync = fields.Integer(string="Days to Sync", default=30, readonly=True,
                                   help="The number of past days to sync attendance for. Set to 0 to sync all records.")
+    last_download_time = fields.Datetime(string="Last Download Time",
+                                         help="The last time attendance data was downloaded from this device." )
 
     def device_connect(self, zk):
         """Function for connecting the device with Odoo"""
@@ -70,10 +72,15 @@ class BiometricDeviceDetails(models.Model):
 
             conn = self.device_connect(zk)
             if conn:
+                # Get user timezone from context, user preferences, or default to UTC
                 user_tz_str = self.env.context.get('tz') or self.env.user.tz or 'UTC'
                 user_timezone = pytz.timezone(user_tz_str)
-                device_time = datetime.now(user_timezone)
-                conn.set_time(device_time)
+
+                # Get current UTC time and convert to user's timezone
+                utc_now = pytz.utc.localize(fields.Datetime.now())
+                user_timezone_time = utc_now.astimezone(user_timezone)
+
+                conn.set_time(user_timezone_time)
                 return {
                     'type': 'ir.actions.client',
                     'tag': 'display_notification',
@@ -126,97 +133,112 @@ class BiometricDeviceDetails(models.Model):
         use_sample_data = False
         _logger.info("--- Starting attendance download ---")
 
-        attendance_data = []
-        if use_sample_data:
-            _logger.info("Using sample data from 'sample_punches.py'.")
-            class SampleAttendance:
-                def __init__(self, att_dict):
-                    self.user_id = att_dict.get('user_id')
-                    self.timestamp = att_dict.get('timestamp')
-                    self.status = att_dict.get('status', 1)
-                    self.punch = att_dict.get('punch', 0)
-            attendance_data = [SampleAttendance(p) for p in sample_punches.data]
-        else:
-            zk = ZK(self.device_ip, port=self.port_number, timeout=30)
-            conn = self.device_connect(zk)
-            if conn:
-                conn.disable_device()
-                attendance_data = conn.get_attendance()
-                conn.enable_device()
-                conn.disconnect()
+        for device in self:
+            attendance_data = []
+            if use_sample_data:
+                _logger.info("Using sample data from 'sample_punches.py'.")
+                class SampleAttendance:
+                    def __init__(self, att_dict):
+                        self.user_id = att_dict.get('user_id')
+                        self.timestamp = att_dict.get('timestamp')
+                        self.status = att_dict.get('status', 1)
+                        self.punch = att_dict.get('punch', 0)
+                attendance_data = [SampleAttendance(p) for p in sample_punches.data]
+            else:
+                zk = ZK(device.device_ip, port=device.port_number, timeout=30)
+                conn = device.device_connect(zk)
+                if conn:
+                    conn.disable_device()
+                    attendance_data = conn.get_attendance()
+                    conn.enable_device()
+                    conn.disconnect()
 
-        if not attendance_data:
-            _logger.warning("No attendance data found to process.")
-            return
-
-        zk_attendance = self.env['zk.machine.attendance']
-        operating_tz_str = self.env.user.tz or 'UTC'
-        operating_tz = pytz.timezone(operating_tz_str)
-
-        punches_by_workday = {}
-
-        for punch in sorted(attendance_data, key=lambda p: p.timestamp):
-            employee = self.env['hr.employee'].search([('device_id_num', '=', str(punch.user_id))], limit=1)
-            if not employee:
+            if not attendance_data:
+                _logger.warning("No new attendance data found to process.")
                 continue
 
-            punch_time_naive = punch.timestamp
-            punch_time_local = operating_tz.localize(punch_time_naive)
-            punch_time_utc = punch_time_local.astimezone(pytz.utc).replace(tzinfo=None)
+            latest_punch_time = max(att.timestamp for att in attendance_data)
 
-            existing_punch = zk_attendance.search([
-                ('employee_id', '=', employee.id),
-                ('punching_time', '=', punch_time_utc)
-            ], limit=1)
+            if device.last_download_time:
+                attendance_data = [att for att in attendance_data if att.timestamp > device.last_download_time]
 
-            if not existing_punch:
-                zk_attendance.create({
-                    'employee_id': employee.id,
-                    'device_id_num': str(punch.user_id),
-                    'punch_type': str(punch.punch),
-                    'attendance_type': str(punch.status),
-                    'punching_time': punch_time_utc,
-                    'address_id': self.address_id.id,
+            device.last_download_time = latest_punch_time
+
+            if not attendance_data:
+                _logger.warning("No new attendance data found after filtering.")
+                continue
+
+            zk_attendance = self.env['zk.machine.attendance']
+            operating_tz_str = self.env.user.tz or 'UTC'
+            operating_tz = pytz.timezone(operating_tz_str)
+
+            punches_by_workday = {}
+
+            for punch in sorted(attendance_data, key=lambda p: p.timestamp):
+                employee = self.env['hr.employee'].search([('device_id_num', '=', str(punch.user_id))], limit=1)
+                if not employee:
+                    continue
+
+                raw_dt = punch.timestamp
+                if getattr(raw_dt, 'tzinfo', None) is None:
+                    local_dt = operating_tz.localize(raw_dt, is_dst=None)
+                else:
+                    local_dt = raw_dt.astimezone(operating_tz)
+
+                utc_dt = local_dt.astimezone(pytz.utc)
+
+                atten_time = fields.Datetime.to_string(utc_dt)
+
+                existing_punch = zk_attendance.search([
+                    ('employee_id', '=', employee.id),
+                    ('punching_time', '=', atten_time)
+                ], limit=1)
+
+                if not existing_punch:
+                    zk_attendance.create({
+                        'employee_id': employee.id,
+                        'device_id_num': str(punch.user_id),
+                        'punch_type': str(punch.punch),
+                        'attendance_type': str(punch.status),
+                        'punching_time': atten_time,
+                        'address_id': device.address_id.id,
+                    })
+
+                workday = self._get_workday_for_punch(employee, local_dt, operating_tz)
+                if not workday:
+                    _logger.warning(f"Could not determine workday for punch at {local_dt} for employee {employee.name}")
+                    continue
+
+                punches_by_workday.setdefault((employee.id, workday), []).append({
+                    "timestamp": utc_dt.replace(tzinfo=None),
+                    "local_time": local_dt
                 })
 
-            workday = self._get_workday_for_punch(employee, punch_time_local, operating_tz)
-            if not workday:
-                _logger.warning(f"Could not determine workday for punch at {punch_time_local} for employee {employee.name}")
-                continue
+            all_workdays = set(day for (_, day) in punches_by_workday.keys())
+            all_employees = self.env['hr.employee'].browse(list(set(emp_id for (emp_id, _) in punches_by_workday.keys())))
 
-            punches_by_workday.setdefault((employee.id, workday), []).append(punch_time_local)
+            for employee in all_employees:
+                for workday in all_workdays:
+                    shift = employee._get_employee_shift_for_day(workday, operating_tz)
+                    if not shift:
+                        continue
+                    
+                    start_of_day_utc = operating_tz.localize(datetime.combine(workday, time.min)).astimezone(pytz.utc)
+                    end_of_day_utc = operating_tz.localize(datetime.combine(workday, time.max)).astimezone(pytz.utc)
+                    
+                    existing_punches = zk_attendance.search([
+                        ('employee_id', '=', employee.id),
+                        ('punching_time', '>=', start_of_day_utc),
+                        ('punching_time', '<=', end_of_day_utc),
+                    ])
+                    
+                    punches = [fields.Datetime.from_string(p.punching_time) for p in existing_punches]
 
-        all_workdays = set(day for (_, day) in punches_by_workday.keys())
-        all_employees = self.env['hr.employee'].browse(list(set(emp_id for (emp_id, _) in punches_by_workday.keys())))
+                    result = self.process_attendance(punches, employee, shift, operating_tz)
+                    self._create_or_update_attendance(result, employee, self.env['hr.attendance'])
 
-        for employee in all_employees:
-            for workday in all_workdays:
-                day_start_utc = operating_tz.localize(datetime.combine(workday, time.min)).astimezone(pytz.utc)
-                day_end_utc = operating_tz.localize(datetime.combine(workday, time.max)).astimezone(pytz.utc)
+            _logger.info("--- Attendance download finished ---")
 
-                existing_attendances = self.env['hr.attendance'].search([
-                    ('employee_id', '=', employee.id),
-                    ('check_in', '>=', day_start_utc),
-                    ('check_in', '<=', day_end_utc),
-                ])
-
-                for att in existing_attendances:
-                    if att.check_in:
-                        punches_by_workday.setdefault((employee.id, workday), []).append(att.check_in.astimezone(operating_tz))
-                    if att.check_out:
-                        punches_by_workday.setdefault((employee.id, workday), []).append(att.check_out.astimezone(operating_tz))
-
-        for (emp_id, workday), punches in punches_by_workday.items():
-            employee = self.env['hr.employee'].browse(emp_id)
-            shift = self._get_employee_shift_for_day(employee, workday, operating_tz)
-
-            if not shift:
-                continue
-
-            result = self.process_attendance(punches, shift['start_local'], shift['end_local'])
-            self._create_or_update_attendance(result, employee, self.env['hr.attendance'])
-
-        _logger.info("--- Attendance download finished ---")
         return {
             'type': 'ir.actions.client',
             'tag': 'display_notification',
@@ -230,169 +252,155 @@ class BiometricDeviceDetails(models.Model):
         }
 
     def _get_workday_for_punch(self, employee, punch_time_local, operating_tz):
+        """Determine the workday for a punch, handling night shifts"""
         punch_date = punch_time_local.date()
 
         prev_date = punch_date - timedelta(days=1)
-        prev_shift = self._get_employee_shift_for_day(employee, prev_date, operating_tz)
-        if prev_shift and prev_shift['is_night_shift'] and punch_time_local <= (prev_shift['end_local'] + timedelta(hours=4)):
-             return prev_date
+        prev_shift = employee._get_employee_shift_for_day(prev_date, operating_tz)
+        if prev_shift and not prev_shift.get('is_holiday') and prev_shift['is_night_shift'] and punch_time_local <= (prev_shift['end_local'] + timedelta(hours=4)):
+            return prev_date
 
-        current_shift = self._get_employee_shift_for_day(employee, punch_date, operating_tz)
-        if current_shift and punch_time_local >= (current_shift['start_local'] - timedelta(hours=3)):
-             return punch_date
+        current_shift = employee._get_employee_shift_for_day(punch_date, operating_tz)
+        if current_shift and not current_shift.get('is_holiday') and punch_time_local >= (current_shift['start_local'] - timedelta(hours=3)):
+            return punch_date
 
-        return None
+        return punch_date
 
-    def _get_employee_shift_for_day(self, employee, target_day, operating_tz):
-        day_of_week_str = target_day.strftime('%A').lower()
-        worksheet = self.env['hr.employee.worksheet'].search([
-            ('employee_id', '=', employee.id),
-            ('day_of_week', '=', day_of_week_str)
-        ], limit=1)
-
-        if not worksheet or (worksheet.work_from == 0 and worksheet.work_to == 0):
-            return None
-
-        work_from_hr = worksheet.work_from
-        work_to_hr = worksheet.work_to
-
-        start_dt_naive = datetime.combine(target_day, datetime.min.time()) + timedelta(hours=work_from_hr)
-
-        end_day = target_day
-        is_night_shift = work_to_hr < work_from_hr
-        if is_night_shift:
-            end_day += timedelta(days=1)
-
-        end_dt_naive = datetime.combine(end_day, datetime.min.time()) + timedelta(hours=work_to_hr)
-
-        return {
-            'start_local': operating_tz.localize(start_dt_naive),
-            'end_local': operating_tz.localize(end_dt_naive),
-            'is_night_shift': is_night_shift
-        }
-
-    def process_attendance(self, punches, shift_start_local, shift_end_local):
-        punches = sorted(list(set(punches)))
+    def process_attendance(self, punches, employee, shift, tz):
+        """Process punches of one employee for one day"""
+        punches = sorted(punches)
+        check_in = None
+        check_out = None
         status_flags = []
-        check_in_local = None
-        check_out_local = None
+
+        if shift.get('is_holiday'):
+            if punches:
+                check_in = punches[0]
+                if len(punches) > 1:
+                    check_out = punches[-1]
+                else:
+                    check_out = None
+
+                worked_hours = 0.0
+                if check_in and check_out:
+                    worked_hours = (check_out - check_in).total_seconds() / 3600.0
+
+                results = {
+                    "employee_id": employee.id,
+                    "date": punches[0].date(),
+                    "check_in": check_in,
+                    "check_out": check_out,
+                    "status": ["Holiday Work", "extra_hours"],
+                    "worked_hours": round(worked_hours, 2),
+                    "extra_hours": round(worked_hours, 2),
+                    "has_punches": True,
+                }
+                if not check_out:
+                    results['status'].append("Missed checkout")
+                return results
+            else:
+                return { "has_punches": False }
+
+
+        shift_start_utc = shift['start_local'].astimezone(pytz.utc).replace(tzinfo=None)
+        shift_end_utc = shift['end_local'].astimezone(pytz.utc).replace(tzinfo=None)
+        break_from_utc = shift.get('break_from_local').astimezone(pytz.utc).replace(tzinfo=None) if shift.get('break_from_local') else None
+        break_to_utc = shift.get('break_to_local').astimezone(pytz.utc).replace(tzinfo=None) if shift.get('break_to_local') else None
+
+        planned_hours = shift.get('planned_work_hours', 0.0)
 
         if len(punches) == 1:
-            single_punch = punches[0]
-            time_to_start = abs((single_punch - shift_start_local).total_seconds())
-            time_to_end = abs((shift_end_local - single_punch).total_seconds())
-
-            if time_to_start < time_to_end:
-                check_in_local = single_punch
+            punch_time = punches[0]
+            if abs(punch_time - shift_start_utc) <= abs(punch_time - shift_end_utc):
+                check_in = punch_time
             else:
-                check_out_local = single_punch
+                check_out = punch_time
+        elif len(punches) > 1:
+            check_in = punches[0]
+            check_out = punches[-1]
 
-        elif len(punches) >= 2:
-            check_in_local = punches[0]
-            check_out_local = punches[-1]
-
-        if check_in_local and not check_out_local:
-            status_flags.append("missing_checkout")
-        if not check_in_local and check_out_local:
-            status_flags.append("missing_checkin")
-
-        if check_in_local:
-            if check_in_local < shift_start_local:
-                status_flags.append("early_checkin")
-            if check_in_local > (shift_start_local + timedelta(minutes=5)):
-                status_flags.append("late_checkin")
-        if check_out_local:
-            if check_out_local < shift_end_local:
-                status_flags.append("early_checkout")
-            if check_out_local > shift_end_local:
-                status_flags.append("late_checkout")
-
-        calc_check_in = check_in_local
-        calc_check_out = check_out_local
-        
-        if "missing_checkin" in status_flags:
-            calc_check_in = shift_start_local
-        
-        is_today_open = check_in_local and check_in_local.date() == datetime.now().date() and not check_out_local
-        if "missing_checkout" in status_flags and not is_today_open:
-            calc_check_out = shift_end_local
-
-        worked_hours = 0
-        overtime_hours = 0
-
-        if calc_check_in and calc_check_out:
-            if calc_check_out < calc_check_in:
-                calc_check_out = calc_check_in
-
-            planned_seconds = (shift_end_local - shift_start_local).total_seconds()
-            worked_seconds = (calc_check_out - calc_check_in).total_seconds()
-
-            worked_hours = worked_seconds / 3600.0
-            overtime_seconds = worked_seconds - planned_seconds
-            overtime_hours = overtime_seconds / 3600.0
-
-            if overtime_seconds > 60:
-                if "extra_hours" not in status_flags:
-                    status_flags.append("extra_hours")
-            elif overtime_seconds < -60:
-                if "less_hours" not in status_flags:
-                    status_flags.append("less_hours")
-        
-        display_worked_hours = 0
-        if check_in_local and check_out_local:
-            display_worked_hours = (check_out_local - check_in_local).total_seconds() / 3600.0
-        else:
-            display_worked_hours = worked_hours
-
-        return {
-            "check_in": check_in_local,
-            "check_out": check_out_local,
-            "status": list(set(status_flags)),
-            "worked_hours": display_worked_hours,
-            "overtime_hours": overtime_hours,
+        results = {
+            "employee_id": employee.id,
+            "date": punches[0].date() if punches else None,
+            "check_in": check_in,
+            "check_out": check_out,
+            "status": [],
+            "worked_hours": 0,
+            "extra_hours": 0,
+            "has_punches": bool(punches),
         }
 
+        if check_in and check_out:
+            if check_out < check_in:
+                check_out = shift_end_utc
+                status_flags.append("invalid_order_fixed")
+
+            break_overlap_seconds = 0
+            if break_from_utc and break_to_utc:
+                overlap_start = max(check_in, break_from_utc)
+                overlap_end = min(check_out, break_to_utc)
+                if overlap_end > overlap_start:
+                    break_overlap_seconds = (overlap_end - overlap_start).total_seconds()
+
+            total_duration_seconds = (check_out - check_in).total_seconds()
+            worked_seconds = total_duration_seconds - break_overlap_seconds
+            worked_hours = worked_seconds / 3600.0
+            results["worked_hours"] = round(worked_hours, 2)
+
+            extra_hours = worked_hours - planned_hours
+            results["extra_hours"] = round(extra_hours, 2)
+
+            if check_in < shift_start_utc:
+                status_flags.append("early_checkin")
+            elif check_in > shift_start_utc:
+                status_flags.append("late_checkin")
+
+            if check_out < shift_end_utc:
+                status_flags.append("early_checkout")
+            elif check_out > shift_end_utc:
+                status_flags.append("late_checkout")
+
+            if extra_hours < -0.1:
+                status_flags.append("less_hours")
+            elif extra_hours > 0.1:
+                status_flags.append("extra_hours")
+
+        elif check_in and not check_out:
+            status_flags.append("Missed checkout")
+            if datetime.now() >= check_in + timedelta(hours=18):
+                check_out = check_in + timedelta(hours=18)
+                results["check_out"] = check_out
+                worked_hours = 18.0
+                results["worked_hours"] = worked_hours
+                extra_hours = worked_hours - planned_hours
+                results["extra_hours"] = round(extra_hours, 2)
+
+        elif check_out and not check_in:
+            status_flags.append("Missed checkin")
+            check_in = shift_start_utc
+            results["check_in"] = check_in
+            worked_hours = (check_out - check_in).total_seconds() / 3600.0
+            results["worked_hours"] = round(worked_hours, 2)
+            extra_hours = worked_hours - planned_hours
+            results["extra_hours"] = round(extra_hours, 2)
+            if extra_hours > 0.1:
+                 status_flags.append("extra_hours")
+
+        else:
+            status_flags.append("absent")
+
+        results["status"] = status_flags
+        return results
 
     def _create_or_update_attendance(self, result, employee, hr_attendance):
         """Helper to insert/update hr.attendance records"""
-
-        check_in_local = result.get("check_in")
-        check_out_local = result.get("check_out")
-        status_list = result.get("status", [])
-        notification_to_send = None
-        was_missing_checkin_flag = False
-        was_missing_checkout_flag = False
-
-        if "missing_checkin" in status_list and check_out_local:
-            workday = check_out_local.date()
-            shift = self._get_employee_shift_for_day(employee, workday, check_out_local.tzinfo)
-            if shift and shift.get('start_local'):
-                check_in_local = shift['start_local']
-                notification_to_send = 'missing_checkin'
-                was_missing_checkin_flag = True
-            else:
-                _logger.warning(f"Could not find worksheet schedule for {employee.name} on {workday} to correct missing check-in.")
-                return 
-
-        if check_in_local and not check_out_local:
-            if (datetime.now(check_in_local.tzinfo) - check_in_local) > timedelta(hours=18):
-                check_out_local = check_in_local + timedelta(hours=18)
-                if 'missing_checkout' not in status_list:
-                    status_list.append('missing_checkout')
-                notification_to_send = 'missing_checkout'
-                was_missing_checkout_flag = True
-
-        if not check_in_local:
+        if not result["has_punches"]:
             return
 
-        if check_out_local and check_in_local.date() < check_out_local.date() and 'night_shift' not in status_list:
-            status_list.append('night_shift')
-
-        check_in_for_odoo = check_in_local.astimezone(pytz.utc).replace(tzinfo=None)
-        check_out_for_odoo = check_out_local.astimezone(pytz.utc).replace(tzinfo=None) if check_out_local else None
-
+        status_list = result["status"]
         status_ids = []
-        for status_name in set(status_list):
+
+        for status_name in status_list:
             status_tag = self.env['hr.attendance.status.tag'].search([('name', '=', status_name)], limit=1)
             if not status_tag:
                 status_tag = self.env['hr.attendance.status.tag'].create({'name': status_name})
@@ -400,89 +408,139 @@ class BiometricDeviceDetails(models.Model):
 
         vals = {
             'employee_id': employee.id,
-            'check_in': check_in_for_odoo,
-            'check_out': check_out_for_odoo,
+            'check_in': result["check_in"],
+            'check_out': result["check_out"],
+            'worked_hours': result["worked_hours"],
             'status_ids': [(6, 0, status_ids)],
-            'worked_hours': result.get("worked_hours", 0),
-            'overtime_hours': result.get("overtime_hours", 0),
-            'was_missing_checkin': was_missing_checkin_flag,
-            'was_missing_checkout': was_missing_checkout_flag,
+            'overtime_hours': result["extra_hours"],
+            'was_missing_checkin': "Missed checkin" in status_list,
+            'was_missing_checkout': "Missed checkout" in status_list,
         }
 
-        day_start_local = datetime.combine(check_in_local.date(), time.min)
-        day_end_local = datetime.combine(check_in_local.date(), time.max)
-        day_start_utc = day_start_local.astimezone(pytz.utc).replace(tzinfo=None)
-        day_end_utc = day_end_local.astimezone(pytz.utc).replace(tzinfo=None)
+        workday_date = result['check_in'].date() if result.get('check_in') else (result.get('check_out').date() if result.get('check_out') else None)
+        if not workday_date:
+            return
+
+        start_of_day = datetime.combine(workday_date, time.min)
+        end_of_day = datetime.combine(workday_date, time.max)
 
         existing = hr_attendance.search([
             ('employee_id', '=', employee.id),
-            ('check_in', '>=', day_start_utc),
-            ('check_in', '<=', day_end_utc),
+            ('check_in', '>=', start_of_day),
+            ('check_in', '<=', end_of_day),
         ], limit=1)
-        
-        attendance_rec = existing
-        if not existing:
-            attendance_rec = hr_attendance.create(vals)
+
+        if existing and (existing.check_in_is_corrected or existing.check_out_is_corrected):
+            _logger.info(f"Skipping auto-update for manually corrected attendance record {existing.id} for {employee.name} on {workday_date}.")
+            return
+
+        attendance_rec = None
+        if existing:
+            existing.with_context(automated_update=True).write(vals)
+            attendance_rec = existing
         else:
-            if not existing.is_corrected:
-                if existing.was_missing_checkin:
-                    vals['was_missing_checkin'] = True
-                if existing.was_missing_checkout:
-                    vals['was_missing_checkout'] = True
+            attendance_rec = hr_attendance.with_context(automated_update=True).create(vals)
 
-                existing_statuses = existing.status_ids.mapped('name')
-                final_statuses = set(existing_statuses + status_list)
-                
-                status_ids = []
-                for status_name in final_statuses:
-                    status_tag = self.env['hr.attendance.status.tag'].search([('name', '=', status_name)], limit=1)
-                    if not status_tag:
-                        status_tag = self.env['hr.attendance.status.tag'].create({'name': status_name})
-                    status_ids.append(status_tag.id)
-                vals['status_ids'] = [(6, 0, status_ids)]
-                existing.write(vals)
 
-        if notification_to_send and not attendance_rec.notification_sent:
-            hr_admin_group = self.env.ref('hr_attendance.group_hr_attendance_manager')
-            hr_admin_users = self.env['res.users'].search([('groups_id', 'in', hr_admin_group.ids)])
-            partner_ids = hr_admin_users.mapped('partner_id').ids
+        if not attendance_rec:
+            return
 
-            user_tz = pytz.timezone(self.env.user.tz or 'UTC')
+        hr_admin_group = self.env.ref('hr_attendance.group_hr_attendance_manager', raise_if_not_found=False)
+        if not hr_admin_group:
+            return
+
+        hr_admin_users = self.env['res.users'].search([('groups_id', 'in', hr_admin_group.ids)])
+
+        ci_str, co_str = "", ""
+        if result["check_in"]:
             ci_local = fields.Datetime.context_timestamp(attendance_rec, attendance_rec.check_in)
-            co_local = fields.Datetime.context_timestamp(attendance_rec, attendance_rec.check_out) if attendance_rec.check_out else None
             ci_str = ci_local.strftime("%Y-%m-%d %H:%M")
-            co_str = co_local.strftime("%Y-%m-%d %H:%M") if co_local else ""
-            
-            if notification_to_send == 'missing_checkout':
-                attendance_rec.message_post(
-                    body=Markup(f"""
-                            <p>
-                                Dear HR Team, <b>{employee.name}</b> checked in at
-                                <span style="color:blue;">{ci_str}</span>
-                                but <span style="color:red;">missed checkout</span>.
-                            </p>
-                            <p>
-                                System auto-checked out at
-                                <b style="color:green;">{co_str}</b>.
-                            </p>
-                        """),
-                    partner_ids=hr_admin_users.mapped('partner_id').ids,
-                    subtype_xmlid="mail.mt_note"
-                )
-                attendance_rec.notification_sent = True
-            elif notification_to_send == 'missing_checkin':
-                attendance_rec.message_post(
-                    body=Markup(f"""
-                            <p>
-                                Dear HR Team, <b>{employee.name}</b>
-                                <span style="color:red;">missed check-in</span>.
-                            </p>
-                            <p>
-                                System considered first log at
-                                <b style="color:blue;">{ci_str}</b> based on the worksheet.
-                            </p>
-                        """),
-                    partner_ids=hr_admin_users.mapped('partner_id').ids,
-                    subtype_xmlid="mail.mt_note"
-                )
-                attendance_rec.notification_sent = True
+
+        if result["check_out"]:
+            co_local = fields.Datetime.context_timestamp(attendance_rec, attendance_rec.check_out)
+            co_str = co_local.strftime("%Y-%m-%d %H:%M")
+
+        if "early_checkin" in status_list:
+            attendance_rec.message_post(
+                body=Markup(f"""
+                    <p>
+                        Dear <b>{employee.name}</b>, you checked in
+                        <span style="color:green;">early</span>
+                        at <span style="color:blue;">{ci_str}</span>.
+                    </p>
+                """),
+                partner_ids=hr_admin_users.mapped('partner_id').ids,
+                subtype_xmlid="mail.mt_note"
+            )
+
+        if "late_checkin" in status_list:
+            attendance_rec.message_post(
+                body=Markup(f"""
+                    <p>
+                        Dear <b>{employee.name}</b>, you checked in
+                        <span style="color:red;">late</span>
+                        at <span style="color:blue;">{ci_str}</span>.
+                    </p>
+                """),
+                partner_ids=hr_admin_users.mapped('partner_id').ids,
+                subtype_xmlid="mail.mt_note"
+            )
+
+        if "early_checkout" in status_list:
+            attendance_rec.message_post(
+                body=Markup(f"""
+                    <p>
+                        Dear <b>{employee.name}</b>, you checked out
+                        <span style="color:red;">early</span>
+                        at <span style="color:blue;">{co_str}</span>.
+                    </p>
+                """),
+                partner_ids=hr_admin_users.mapped('partner_id').ids,
+                subtype_xmlid="mail.mt_note"
+            )
+
+        if "late_checkout" in status_list:
+            attendance_rec.message_post(
+                body=Markup(f"""
+                    <p>
+                        Dear <b>{employee.name}</b>, you checked out
+                        <span style="color:green;">late</span>
+                        at <span style="color:blue;">{co_str}</span>.
+                    </p>
+                """),
+                partner_ids=hr_admin_users.mapped('partner_id').ids,
+                subtype_xmlid="mail.mt_note"
+            )
+
+        if "Missed checkin" in status_list and result["check_in"]:
+            attendance_rec.message_post(
+                body=Markup(f"""
+                    <p>
+                        Dear <b>{employee.name}</b>,
+                        you <span style="color:red;">missed check-in</span>.
+                    </p>
+                    <p>
+                        System considered first log at
+                        <b style="color:blue;">{ci_str}</b>.
+                    </p>
+                """),
+                partner_ids=hr_admin_users.mapped('partner_id').ids,
+                subtype_xmlid="mail.mt_note"
+            )
+
+        if "Missed checkout" in status_list and result["check_out"]:
+            attendance_rec.message_post(
+                body=Markup(f"""
+                    <p>
+                        Dear <b>{employee.name}</b>, you checked in at
+                        <span style="color:blue;">{ci_str}</span>
+                        but <span style="color:red;">missed checkout</span>.
+                    </p>
+                    <p>
+                        System auto-checked out at
+                        <b style="color:green;">{co_str}</b>.
+                    </p>
+                """),
+                partner_ids=hr_admin_users.mapped('partner_id').ids,
+                subtype_xmlid="mail.mt_note"
+            )
